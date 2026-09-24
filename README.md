@@ -38,3 +38,8 @@ Certifique-se de ter o [Python instalado](https://www.python.org/) em sua máqui
    ```bash
    git clone [https://github.com/SEU-USUARIO/carcinoweb.git](https://github.com/hildemariocastro/carcinoweb.git)
    cd carcinoweb
+
+   ## 🖼️ Pré-visualização do Sistema
+| Atlas 2D Interativo | Visualizador 3D |
+| :---: | :---: |
+| ![Atlas 2D](assets/print_2d.png) | ![3D](assets/print_3d.png) |
