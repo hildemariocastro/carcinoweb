@@ -1,232 +1,496 @@
-import streamlit as st
-import streamlit.components.v1 as components
-import base64
 import os
-from PIL import Image
+import base64
+import streamlit as st
+from PIL import Image, ImageDraw
 
-# Configuração da Página
-st.set_page_config(page_title="CrustaMorf - Atlas de Morfologia", page_icon="🦐", layout="wide")
+# Tentativa opcional de carregar coordenadas interativas (funciona mesmo se não instalado)
+try:
+    from streamlit_image_coordinates import streamlit_image_coordinates
+    HAS_COORDS = True
+except ImportError:
+    HAS_COORDS = False
 
-# Inicialização de estado para o Quiz
-if 'pontuacao' not in st.session_state:
-    st.session_state.pontuacao = 0
-if 'quiz_enviado' not in st.session_state:
-    st.session_state.quiz_enviado = False
+# ==============================================================================
+# CONFIGURAÇÃO DA PÁGINA E MODO ANTI-DISTRAÇÃO
+# ==============================================================================
+st.set_page_config(
+    page_title="CrustaMorf 2.0 | UFRPE",
+    page_icon="🦐",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Cabeçalho Principal
-st.title("🦐 CrustaMorf: Plataforma de Morfologia de Crustáceos")
-st.markdown("**Universidade Federal Rural de Pernambuco (UFRPE) | Engenharia de Pesca**")
-st.markdown("---")
+# ==============================================================================
+# ESTILIZAÇÃO CSS (BIO-MARINE UI & FOCO COGNITIVO)
+# ==============================================================================
+st.markdown("""
+<style>
+    /* Ocultar menus desnecessários do Streamlit para evitar distrações em aula */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Cartões Pedagógicos e Destaques */
+    .stCard {
+        background-color: #112240;
+        border-left: 5px solid #00E5FF;
+        padding: 18px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        color: #E6F1FF;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    .stCard h4 {
+        color: #00E5FF;
+        margin-top: 0;
+    }
+    .badge-tagma {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        background-color: #00E5FF;
+        color: #0A192F;
+        margin-bottom: 8px;
+    }
+    .alerta-clinico {
+        background-color: #2D1B2E;
+        border-left: 5px solid #FF6B6B;
+        padding: 14px;
+        border-radius: 8px;
+        color: #FFDADA;
+        margin-top: 10px;
+    }
+    .dica-bancada {
+        background-color: #132A13;
+        border-left: 5px solid #4ECDC4;
+        padding: 14px;
+        border-radius: 8px;
+        color: #E8F8F5;
+        margin-top: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Menu de Navegação em Abas Superiores / Rádio Lateral
-menu = st.sidebar.radio("Navegação do Aplicativo", [
-    "📖 Atlas 2D (Completo)", 
-    "🧊 3D - Morfologia Externa", 
-    "🔬 3D - Estruturas Detalhadas", 
-    "🎮 Modo Desafio (Quiz 15 Q)", 
-    "🧠 Mapa Mental de Estudos"
-])
-
-# Banco de Dados Morfológico Completo
-morfologia_db = {
-    "Rostro": "Extensão rígida e serrilhada frontal da carapaça. Atua na defesa mecânica e na estabilização hidrodinâmica durante a natação.",
-    "Cefalotórax": "Região anterior fusionada (cabeça + tórax) protegida pela carapaça quitinosa. Abriga os principais órgãos vitais (coração, estômago, hepatopâncreas e brânquias).",
-    "Abdômen": "Região posterior segmentada em pleômeros musculares. É a principal estrutura de interesse comercial e zootécnico na carcinicultura (a 'carne' do camarão).",
-    "Pereiópodes": "Apêndices torácicos (10 patas). Os primeiros pares possuem pinças (quelas) para captura de alimento e defesa; os demais auxiliam na locomoção no fundo.",
-    "Pleópodes": "Apêndices abdominais birremes utilizados ativamente para a natação contínua e fixação de ovos nas fêmeas ovígeras.",
-    "Telson e Urópodes": "Formam coletivamente o leque caudal. Utilizados no reflexo de escape rápido (natação de fuga para trás por propulsão mecânica).",
-    "Antenas e Antênulos": "Apêndices sensoriais cefálicos longos e curtos, respetivamente, responsáveis pela quimiorrecepção, tato e equilíbrio.",
-    "Hepatopâncreas": "Órgão glandular interno multiespecializado, responsável pela digestão, absorção de nutrientes, armazenamento de reservas e desintoxicação.",
-    "Brânquias": "Órgãos respiratórios foliáceos localizados na cavidade branquial lateral do cefalotórax, essenciais para as trocas gasosas."
+# ==============================================================================
+# BASE DE DADOS ANATÔMICA E ZOOTÉCNICA (PENAEUS VANNAMEI)
+# ==============================================================================
+ESTRUTURAS = {
+    "Rostro (Rostrum)": {
+        "tagma": "Cefalotórax",
+        "coords": (120, 140),
+        "funcao": "Projeção rígida anterior da carapaça com dentes dorsais e ventrais. Atua na estabilização hidrodinâmica e defesa mecânica.",
+        "importancia_zootecnica": "Essencial para identificação taxonômica (fórmula rostral em P. vannamei geralmente apresenta 7-10 dentes dorsais e 2-4 ventrais). Deformidades ou quebras indicam estresse nutricional ou alta densidade de estocagem.",
+        "dica_lab": "Conte os dentes dorsais e ventrais com auxílio de uma lupa estereoscópica para confirmar a espécie."
+    },
+    "Cefalotórax (Carapaça)": {
+        "tagma": "Cefalotórax",
+        "coords": (260, 160),
+        "funcao": "Fusão da cabeça e tórax recoberta pelo exoesqueleto quitinoso calcificado, protegendo órgãos vitais e câmaras branquiais.",
+        "importancia_zootecnica": "Manchas brancas circulares na face interna da carapaça são o principal sinal clínico do Vírus da Mancha Branca (WSSV). Carapaça mole pode indicar alcalinidade baixa na água do viveiro.",
+        "dica_lab": "Pressione levemente a lateral da carapaça para avaliar a rigidez do estado de muda (intermuda vs. pós-muda)."
+    },
+    "Antênulas e Antenas": {
+        "tagma": "Cefalotórax",
+        "coords": (90, 210),
+        "funcao": "Apêndices sensoriais primários responsáveis pela quimiorrecepção (olfato/paladar subaquático), equilíbrio (estatocisto na base antenular) e mecanorrecepção.",
+        "importancia_zootecnica": "Antenas quebradas, curtas ou com necroses escuras (melanização) são o primeiro bioindicador de deterioração da qualidade do fundo do viveiro ou infecção bacteriana (Vibriose).",
+        "dica_lab": "Observe se o comprimento das antenas ultrapassa o corpo; antenas íntegras indicam excelente manejo sanitário."
+    },
+    "Pereiópodes (Patas Ambulatórias)": {
+        "tagma": "Cefalotórax",
+        "coords": (280, 290),
+        "funcao": "Cinco pares de apêndices torácicos usados para caminhar no substrato, escavar e capturar alimento (os 3 primeiros pares são quelados na subordem Dendrobranchiata).",
+        "importancia_zootecnica": "A presença de quelas nos 3 primeiros pares diferencia os camarões marinhos peneídeos dos carídeos (como o Macrobrachium rosenbergii, que possui quela apenas nos 2 primeiros pares).",
+        "dica_lab": "Use uma pinça fina para estender os 5 pares e identificar as micro-quelas nos 3 primeiros pares."
+    },
+    "Hepatopâncreas (Glândula Digestiva)": {
+        "tagma": "Sistemas Internos",
+        "coords": (250, 175),
+        "funcao": "Principal órgão metabólico: atua na secreção de enzimas digestivas, absorção de nutrientes, armazenamento de lipídios e desintoxicação.",
+        "importancia_zootecnica": "Órgão-alvo da Necrose Hepatopancreática Aguda (AHPND/EMS) e Vibrioses. Em animais saudáveis, apresenta coloração marrom-dourada e volume cheio; quando pálido ou atrofiado, indica inanição ou infecção severa.",
+        "dica_lab": "Em pós-larvas e juvenis translúcidos, avalie a cor e o preenchimento lipídico contra a luz."
+    },
+    "Brânquias (Dendrobrânquias)": {
+        "tagma": "Sistemas Internos",
+        "coords": (295, 210),
+        "funcao": "Estruturas ramificadas localizadas na câmara branquial responsáveis pelas trocas gasosas (O₂/CO₂), excreção de amônia e osmorregulação.",
+        "importancia_zootecnica": "Brânquias escurecidas (amareladas ou pretas) indicam acúmulo de matéria orgânica em suspensão, protozoários epibiontes (Zoothamnium) ou estresse por nitrito/amônia.",
+        "dica_lab": "Rebata a borda ventro-lateral da carapaça (branquiostegito) para expor a estrutura ramificada das dendrobrânquias."
+    },
+    "Abdômen (Pleômeros)": {
+        "tagma": "Abdômen",
+        "coords": (450, 150),
+        "funcao": "Composto por 6 segmentos musculares articulados que abrigam o intestino médio e a musculatura flexora rápida para natação de fuga.",
+        "importancia_zootecnica": "Principal parte comercializável do camarão. Opacidade muscular esbranquiçada (necrose muscular) pode ocorrer por choque térmico, hipóxia ou infecção pelo vírus IMNV (Mionecrose Infecciosa).",
+        "dica_lab": "Verifique a transparência do músculo abdominal e a linha escura dorsal correspondente ao trato intestinal cheio."
+    },
+    "Pleópodes (Patas Natatórias)": {
+        "tagma": "Abdômen",
+        "coords": (440, 270),
+        "funcao": "Cinco pares de apêndices abdominais birremes adaptados para natação contínua. No macho, o 1º par é modificado em Petasma (órgão copulador).",
+        "importancia_zootecnica": "Fundamental para sexagem em reprodutores: machos apresentam o Petasma (1º par de pleópodes unido), enquanto fêmeas possuem o Télico entre os últimos pereiópodes.",
+        "dica_lab": "Inspecione o 1º par abdominal ventralmente para determinar o sexo do exemplar na bancada."
+    },
+    "Telson e Urópodes (Leque Caudal)": {
+        "tagma": "Leque Caudal",
+        "coords": (620, 220),
+        "funcao": "O Telson (espinho central) e os Urópodes (abas laterais) formam o leque caudal, responsável pela propulsão explosiva para trás na reação de escape.",
+        "importancia_zootecnica": "Bordas avermelhadas ou corroídas (erosão do leque caudal) são sinais clássicos de estresse ambiental ou infecção bacteriana secundária no cultivo.",
+        "dica_lab": "Abra os urópodes em formato de leque e observe a integridade das cerdas marginais."
+    }
 }
 
-# Caminho base para os arquivos locais
-pasta_atual = os.path.dirname(os.path.abspath(__file__))
+# ==============================================================================
+# CASOS CLÍNICOS DE CULTIVO (PBL - APRENDIZAGEM BASEADA EM PROBLEMAS)
+# ==============================================================================
+CASOS_CLINICOS = [
+    {
+        "titulo": "Caso 1: Mortalidade Súbita e Pontos Calcários",
+        "cenario": "Em uma fazenda de carcinicultura no litoral de Pernambuco, os camarões (P. vannamei) passaram a nadar erraticamente próximos às bordas do viveiro e reduziram o consumo de ração. Na inspeção de bancada, você observa pontos circulares esbranquiçados incrustados na face interna da carapaça.",
+        "pergunta": "Qual estrutura anatômica deve ser inspecionada prioritariamente e qual é a suspeita diagnóstica principal?",
+        "opcoes": [
+            "A) Cefalotórax (Carapaça) — Suspeita de Vírus da Mancha Branca (WSSV).",
+            "B) Pleópodes — Suspeita de deficiência de cálcio na água.",
+            "C) Rostro — Suspeita de canibalismo por alta densidade.",
+            "D) Telson — Suspeita de Mionecrose Infecciosa (IMNV)."
+        ],
+        "correta": 0,
+        "explicacao": "Correto! Depósitos circulares de sais de cálcio na cutícula interna da carapaça (Cefalotórax) são o sinal patognomônico clássico do Vírus da Mancha Branca (WSSV)."
+    },
+    {
+        "titulo": "Caso 2: Camarões Letárgicos e Intestino Vazio",
+        "cenario": "Durante a biometria semanal de juvenis de 4g, você nota que diversos indivíduos estão com o trato intestinal vazio e apresentam uma mancha pálida e encolhida na região póstero-dorsal do cefalotórax.",
+        "pergunta": "Qual órgão interno está atrofiado e qual sua função comprometida?",
+        "opcoes": [
+            "A) Coração dorsal — Bombeamento de hemolinfa.",
+            "B) Hepatopâncreas — Digestão enzimática, reserva lipídica e metabolismo.",
+            "C) Estatocisto — Equilíbrio hidrodinâmico.",
+            "D) Petasma — Maturação reprodutiva."
+        ],
+        "correta": 1,
+        "explicacao": "Exato! O Hepatopâncreas é o centro metabólico e digestivo do camarão. Sua palidez e atrofia indicam parada alimentar e possível infecção entérica (como Vibriose ou AHPND)."
+    },
+    {
+        "titulo": "Caso 3: Diferenciação Taxonômica Rápida na Bancada",
+        "cenario": "Um estudante precisa separar rapidamente exemplares de Penaeus vannamei (Dendrobranchiata) de camarões de água doce Macrobrachium rosenbergii (Pleocyemata/Caridea) misturados no laboratório.",
+        "pergunta": "Qual característica morfológica externa confirma que o exemplar é um peneídeo (P. vannamei)?",
+        "opcoes": [
+            "A) Presença de quelas apenas nos 2 primeiros pares de pereiópodes.",
+            "B) Presença de quelas nos 3 primeiros pares de pereiópodes e 2º somito abdominal não sobrepondo o 1º.",
+            "C) Ausência total de rostro.",
+            "D) Presença de brânquias do tipo filobrânquia."
+        ],
+        "correta": 1,
+        "explicacao": "Perfeito! Os camarões da subordem Dendrobranchiata (como P. vannamei) possuem os 3 primeiros pares de pereiópodes quelados e brânquias dendrobrânquias, além da pleura do 2º segmento abdominal não sobrepor a do 1º."
+    }
+]
 
-# -------------------------------------------------------------
-# 1. ATLAS 2D (COMPLETO)
-# -------------------------------------------------------------
-if menu == "📖 Atlas 2D (Completo)":
-    st.header("Atlas Morfológico 2D – *Penaeus vannamei*")
-    st.markdown("Visualize a ilustração anatômica completa e consulte a lista detalhada das estruturas ao lado.")
-    
-    col_img, col_lista = st.columns([1.5, 1])
-    
-    with col_img:
-        caminho_2d = os.path.join(pasta_atual, "camarao.jpg")
-        try:
-            img = Image.open(caminho_2d)
-            st.image(img, caption="Ilustração Anatômica Externa e Detalhada", use_container_width=True)
-        except FileNotFoundError:
-            st.error("⚠️ Arquivo 'camarao.jpg' não encontrado na pasta do projeto.")
-            
-    with col_lista:
-        st.subheader("📋 Lista Morfológica e Funções")
-        for est, desc in morfologia_db.items():
-            with st.expander(f"📌 {est}"):
-                st.write(desc)
+# ==============================================================================
+# BANCO DE 15 QUESTÕES DO MODO DESAFIO (QUIZ)
+# ==============================================================================
+QUESTOES_QUIZ = [
+    {"q": "1. Quantos pares de pereiópodes (patas ambulatórias) possui o camarão Penaeus vannamei?", "opts": ["3 pares", "4 pares", "5 pares", "6 pares"], "ans": 2, "exp": "Os decápodes possuem 5 pares de pereiópodes (10 patas torácicas)."},
+    {"q": "2. Em P. vannamei, quantos pares de pereiópodes terminam em quela (pinça)?", "opts": ["Apenas o 1º par", "Os 2 primeiros pares", "Os 3 primeiros pares", "Todos os 5 pares"], "ans": 2, "exp": "Na subordem Dendrobranchiata (família Penaeidae), os 3 primeiros pares de pereiópodes são quelados."},
+    {"q": "3. Qual é o nome do órgão copulador masculino localizado no 1º par de pleópodes?", "opts": ["Télico", "Petasma", "Escafocerito", "Estatocisto"], "ans": 1, "exp": "O Petasma é formado pela união dos endopoditos do 1º par de pleópodes nos machos."},
+    {"q": "4. Onde se localiza o Télico, estrutura receptora de espermatóforos nas fêmeas?", "opts": ["Na face ventral do tórax, entre os últimos pares de pereiópodes", "Na ponta do rostro", "Junto ao telson", "No 3º par de pleópodes"], "ans": 0, "exp": "O télico situa-se nos esternitos torácicos entre o 4º e 5º par de pereiópodes."},
+    {"q": "5. Qual tipo de brânquia caracteriza a subordem do camarão marinho P. vannamei?", "opts": ["Tricobrânquia", "Filobrânquia", "Dendrobrânquia", "Lamelibrânquia"], "ans": 2, "exp": "Dendrobrânquias possuem eixo principal com ramificações secundárias em formato de árvore."},
+    {"q": "6. Qual apêndice atua como estabilizador hidrodinâmico (leme) na base da segunda antena?", "opts": ["Escafocerito (Exopodito antenal)", "Mandíbula", "Maxilípede", "Urópode"], "ans": 0, "exp": "O escafocerito (escamas antenais) funciona como estabilizador durante o nado e salto para trás."},
+    {"q": "7. Qual a principal função dos pleópodes localizados no abdômen?", "opts": ["Trituração de alimentos", "Natação contínua para frente", "Escavação pesada", "Defesa contra predadores"], "ans": 1, "exp": "Os pleópodes são apêndices abdominais birremes especializados na natação."},
+    {"q": "8. O leque caudal do camarão é formado pela combinação de quais estruturas?", "opts": ["Rostro e Antênulas", "Telson central e dois pares de Urópodes laterais", "Quinto par de pleópodes e carapaça", "Petasma e Télico"], "ans": 1, "exp": "O telson mediano junto aos urópodes laterais compõe o leque caudal propulsor."},
+    {"q": "9. Qual estrutura sensorial localizada na base das antênulas é responsável pelo equilíbrio espacial do camarão?", "opts": ["Olho composto", "Estatocisto", "Hepatopâncreas", "Glândula antenal"], "ans": 1, "exp": "O estatocisto contém um estatólito interno que informa a orientação gravitacional ao sistema nervoso."},
+    {"q": "10. Onde fica localizada a Glândula Antenal (Glândula Verde), responsável pela excreção e osmorregulação?", "opts": ["No telson", "Na base das antenas (cefalotórax)", "No 6º segmento abdominal", "Nas brânquias"], "ans": 1, "exp": "Situa-se na região anterior do cefalotórax, abrindo-se num poro excretor na base da segunda antena."},
+    {"q": "11. O que indica uma coloração avermelhada ou necrose escura (melanização) nas extremidades dos apêndices?", "opts": ["Crescimento acelerado normal", "Resposta imune a lesões físicas ou infecção bacteriana (ex: Vibrio)", "Prontidão para reprodução", "Excesso de oxigênio dissolvido"], "ans": 1, "exp": "A melanização ocorre pela ativação do sistema profenoloxidase em resposta a patógenos ou traumas."},
+    {"q": "12. Quantos segmentos (somitos/pleômeros) compõem o abdômen de um camarão peneídeo?", "opts": ["4 segmentos", "5 segmentos", "6 segmentos", "8 segmentos"], "ans": 2, "exp": "O abdômen dos decápodes é formado por 6 somitos articulados antes do telson."},
+    {"q": "13. Qual órgão interno ocupa grande parte do cefalotórax e é o principal indicador do estado nutricional do camarão?", "opts": ["Coração", "Hepatopâncreas", "Cordão nervoso ventral", "Ceco posterior"], "ans": 1, "exp": "O hepatopâncreas armazena lipídios e glicogênio, refletindo diretamente a saúde nutricional."},
+    {"q": "14. Como o P. vannamei é classificado quanto ao tipo de télico nas fêmeas?", "opts": ["Télico aberto", "Télico fechado", "Sem télico", "Télico interno abdominal"], "ans": 0, "exp": "Penaeus vannamei pertence ao grupo de camarões de télico aberto, exigindo cópula com a fêmea em estado de carapaça dura."},
+    {"q": "15. Qual reação comportamental/anatômica é acionada pela contração rápida da musculatura abdominal e abertura do leque caudal?", "opts": ["Forrageamento lento", "Ecdise (Muda)", "Reação de fuga explosiva para trás (Caridoid escape reaction)", "Acasalamento"], "ans": 2, "exp": "A flexão abdominal rápida projeta o camarão para trás em alta velocidade para escapar de predadores."}
+]
 
-# -------------------------------------------------------------
-# 2. 3D - MORFOLOGIA EXTERNA
-# -------------------------------------------------------------
-elif menu == "🧊 3D - Morfologia Externa":
-    st.header("Visualizador 3D: Morfologia Externa")
-    st.markdown("Interaja livremente: **Gaste o mouse para girar**, **role para aproximar (zoom)** e clique e arraste para mudar o ângulo.")
+# ==============================================================================
+# FUNÇÕES UTILITÁRIAS (IMAGEM DE FALLBACK E RENDERIZAÇÃO 3D/AR)
+# ==============================================================================
+def carregar_imagem_2d():
+    """Carrega camarao.jpg ou gera um diagrama esquemático automático caso o arquivo não exista."""
+    if os.path.exists("camarao.jpg"):
+        return Image.open("camarao.jpg")
     
-    col_3d, col_info = st.columns([1.6, 1])
-    
-    with col_3d:
-        caminho_3d1 = os.path.join(pasta_atual, "camarao.glb")
-        try:
-            with open(caminho_3d1, "rb") as f:
-                b64_1 = base64.b64encode(f.read()).decode("utf-8")
-            
-            html_viewer1 = f"""
-                <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.1.1/model-viewer.min.js"></script>
-                <model-viewer src="data:model/gltf-binary;base64,{b64_1}" 
-                    alt="Modelo 3D Externo" auto-rotate camera-controls shadow-intensity="1" 
-                    style="width: 100%; height: 500px; background-color: #f0f2f6; border-radius: 12px;">
-                </model-viewer>
-            """
-            components.html(html_viewer1, height=520)
-        except FileNotFoundError:
-            st.error("⚠️ Arquivo 'camarao.glb' não encontrado. Certifique-se de salvá-lo na pasta.")
-            
-    with col_info:
-        st.subheader("🔍 Guia Externo")
-        st.info("Foque sua análise nas regiões de revestimento externo:")
-        st.markdown("""
-        * **Carapaça:** Proteção do cefalotórax.
-        * **Somitos Abdominais:** Articulações flexíveis.
-        * **Apêndices Locomotores:** Diferenciação entre pereiópodes e pleópodes.
-        * **Leque Caudal:** Mecanismo hidrodinâmico de escape.
-        """)
-        for k in ["Rostro", "Cefalotórax", "Abdômen", "Pereiópodes", "Pleópodes", "Telson e Urópodes"]:
-            with st.expander(k):
-                st.write(morfologia_db[k])
+    # Gera imagem esquemática de segurança para que o app nunca trave sem o arquivo
+    img = Image.new("RGB", (750, 380), color=(10, 25, 47))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([15, 15, 735, 365], outline=(0, 229, 255), width=2)
+    # Desenho estilizado dos tagmas
+    draw.ellipse([160, 110, 350, 240], fill=(20, 60, 110), outline=(0, 229, 255), width=3) # Cefalotórax
+    draw.polygon([(70, 150), (165, 130), (165, 165)], fill=(0, 180, 216)) # Rostro
+    draw.ellipse([350, 120, 580, 220], fill=(28, 85, 140), outline=(0, 229, 255), width=3) # Abdômen
+    draw.polygon([(580, 160), (670, 210), (640, 250)], fill=(0, 229, 255)) # Leque caudal
+    draw.text((210, 40), "DIAGRAMA INTERATIVO - PENAEUS VANNAMEI", fill=(0, 229, 255))
+    draw.text((195, 165), "CEFALOTORAX", fill=(255, 255, 255))
+    draw.text((425, 165), "ABDOMEN", fill=(255, 255, 255))
+    draw.text((590, 255), "TELSON", fill=(255, 255, 255))
+    return img
 
-# -------------------------------------------------------------
-# 3. 3D - ESTRUTURAS DETALHADAS
-# -------------------------------------------------------------
-elif menu == "🔬 3D - Estruturas Detalhadas":
-    st.header("Visualizador 3D: Anatomia Interna / Detalhada")
-    st.markdown("Explore camadas internas, órgãos e sistemas de suporte metabólico e respiratório.")
-    
-    col_3d2, col_info2 = st.columns([1.6, 1])
-    
-    with col_3d2:
-        caminho_3d2 = os.path.join(pasta_atual, "camarao_detalhado.glb")
-        try:
-            with open(caminho_3d2, "rb") as f:
-                b64_2 = base64.b64encode(f.read()).decode("utf-8")
-            
-            html_viewer2 = f"""
-                <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.1.1/model-viewer.min.js"></script>
-                <model-viewer src="data:model/gltf-binary;base64,{b64_2}" 
-                    alt="Modelo 3D Detalhado" auto-rotate camera-controls shadow-intensity="1" 
-                    style="width: 100%; height: 500px; background-color: #eef2f5; border-radius: 12px;">
-                </model-viewer>
-            """
-            components.html(html_viewer2, height=520)
-        except FileNotFoundError:
-            st.error("⚠️ Arquivo 'camarao_detalhado.glb' não encontrado. Salve-o na pasta do projeto.")
-            
-    with col_info2:
-        st.subheader("🔬 Guia de Órgãos e Sistemas")
-        st.info("Estruturas internas de relevância zootécnica e patológica:")
-        for k in ["Hepatopâncreas", "Brânquias", "Cefalotórax"]:
-            with st.expander(k):
-                st.write(morfologia_db[k])
+def renderizar_modelo_3d(arquivo_glb, titulo_modelo):
+    """Renderiza modelo .glb com suporte a rotação 360 e Realidade Aumentada (AR) via Google Model-Viewer."""
+    if not os.path.exists(arquivo_glb):
+        st.warning(f"⚠️ Arquivo `{arquivo_glb}` não encontrado na pasta raiz do projeto.")
+        st.info("💡 **Como ativar:** Coloque o arquivo `.glb` na mesma pasta do `app_crustamorf.py` para visualizar em 3D e Realidade Aumentada.")
+        return
 
-# -------------------------------------------------------------
-# 4. MODO DESAFIO (QUIZ COM 15 PERGUNTAS)
-# -------------------------------------------------------------
-elif menu == "🎮 Modo Desafio (Quiz 15 Q)":
-    st.header("Desafio de Morfologia de Crustáceos (15 Questões)")
-    st.markdown("Responda todas as perguntas abaixo para testar seu nível de prontidão para as aulas práticas de laboratório.")
-    
-    questoes = [
-        {"p": "Qual estrutura atua como o principal apêndice para a natação contínua no camarão?", "opts": ["Pereiópodes", "Pleópodes", "Antenas", "Rostro"], "certo": "Pleópodes"},
-        {"p": "O hepatopâncreas e as brânquias ficam abrigados em qual destas regiões?", "opts": ["Abdômen", "Telson", "Cefalotórax", "Urópodes"], "certo": "Cefalotórax"},
-        {"p": "Durante a natação de fuga (reflexo de escape para trás), o camarão utiliza primariamente:", "opts": ["Apenas o Rostro", "Os Pereiópodes", "O leque caudal (Telson + Urópodes)", "Os Pleópodes anteriores"], "certo": "O leque caudal (Telson + Urópodes)"},
-        {"p": "Qual é a principal função mecânica do rostro nos peneídeos?", "opts": ["Digestão de alimentos", "Defesa e estabilização hidrodinâmica", "Respiração branquial", "Fixação de ovos"], "certo": "Defesa e estabilização hidrodinâmica"},
-        {"p": "Como são tecnicamente chamados os segmentos articulados que compõem o abdômen?", "opts": ["Pleômeros", "Quelípodes", "Quelíceras", "Carapáceas"], "certo": "Pleômeros"},
-        {"p": "Qual a principal importância comercial e zootécnica do abdômen?", "opts": ["Filtração de plâncton", "Principal porção muscular consumida e comercializada", "Órgão produtor de hormônios de muda", "Sede do sistema nervoso central"], "certo": "Principal porção muscular consumida e comercializada"},
-        {"p": "Os apêndices torácicos chamados pereiópodes exercem funções fundamentais como:", "opts": ["Natação rápida em coluna d'água", "Locomoção bentônica e manipulação de alimento", "Trocas gasosas diretas", "Produção de oócitos"], "certo": "Locomoção bentônica e manipulação de alimento"},
-        {"p": "A carapaça rígida dos crustáceos decápodes é endurecida principalmente por:", "opts": ["Queratina e cartilagem", "Quitina impregnada com carbonato de cálcio", "Fibras de celulose pura", "Colágeno desidratado"], "certo": "Quitina impregnada com carbonato de cálcio"},
-        {"p": "Qual órgão interno é responsável pela digestão, secreção de enzimas e reserva de nutrientes?", "opts": ["Coração tubular", "Hepatopâncreas", "Gônada imatura", "Brânquia filamentosa"], "certo": "Hepatopâncreas"},
-        {"p": "As trocas gasosas (respiração) no camarão ocorrem primordialmente nas:", "opts": ["Brânquias", "Pernas ambulatórias", "Paredes do estômago", "Glândulas verdes"], "certo": "Brânquias"},
-        {"p": "O telson e os urópodes combinados formam qual estrutura morfológica de propulsão?", "opts": ["Cadeia ventral", "Leque caudal", "Escafognatito", "MANDÍBULA"], "certo": "Leque caudal"},
-        {"p": "Qual par de apêndices cefálicos é mais longo e atua na quimiorrecepção de longo alcance?", "opts": ["Antenas", "Maxilípodes", "Rostro", "Olhos compostos"], "certo": "Antenas"},
-        {"p": "Os antênulos situam-se em posição anterior e desempenham papel importante em:", "opts": ["Mastigação pesada", "Equilíbrio e quimiorrecepção fina", "Propulsão de fuga", "Excreção de amônia"], "certo": "Equilíbrio e quimiorrecepção fina"},
-        {"p": "O processo de troca periódica do exoesqueleto para permitir o crescimento do animal chama-se:", "opts": ["Metamorfose incompleta", "Ecdise (Muda)", "Encistamento", "Osmorregulação"], "certo": "Ecdise (Muda)"},
-        {"p": "Qual estrutura ocular abriga o complexo neurossecretor que controla o ciclo de muda?", "opts": ["Cônica córnea", "Pedúnculo ocular (Órgão X / Glândula do seio)", "Cristalino óptico", "Retina distal"], "certo": "Pedúnculo ocular (Órgão X / Glândula do seio)"}
-    ]
-    
-    with st.form("form_quiz_15"):
-        respostas = []
-        for i, q in enumerate(questoes):
-            st.markdown(f"**Questão {i+1}: {q['p']}**")
-            r = st.radio("Escolha a alternativa:", q["opts"], key=f"q_{i}", index=None)
-            respostas.append(r)
-            st.markdown("---")
-            
-        enviado = st.form_submit_button("Finalizar e Corrigir Prova")
-        
-        if enviado:
-            acertos = sum(1 for i, r in enumerate(respostas) if r == questoes[i]["certo"])
-            st.session_state.pontuacao = acertos
-            st.session_state.quiz_enviado = True
+    with open(arquivo_glb, "rb") as f:
+        dados_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-    if st.session_state.quiz_enviado:
-        pts = st.session_state.pontuacao
-        st.subheader("📊 Resultado do Desafio")
-        if pts >= 12:
-            st.balloons()
-            st.success(f"🏆 Excelente! Você acertou {pts} de 15 questões. Domínio total da morfologia!")
-        elif pts >= 8:
-            st.warning(f"👍 Bom desempenho! Você acertou {pts} de 15. Vale a pena revisar os modelos 3D e o Atlas 2D.")
-        else:
-            st.error(f"📚 Você acertou {pts} de 15. Recomendamos uma revisão detalhada no material de estudo.")
-
-# -------------------------------------------------------------
-# 5. MAPA MENTAL DE ESTUDOS
-# -------------------------------------------------------------
-elif menu == "🧠 Mapa Mental de Estudos":
-    st.header("Mapa Mental: Morfologia e Biologia de Crustáceos")
-    st.markdown("Esquema estruturado para revisão rápida de conteúdos cobrados na Engenharia de Pesca.")
-    
-    st.markdown("""
-    O diagrama interativo abaixo sintetiza os eixos de estudo da disciplina:
-    """)
-    
-    # Renderização de Mapa Mental via Mermaid integrado no Streamlit
-    mapa_mermaid = """
-    ```mermaid
-    graph TD
-        A[Morfologia de Crustáceos<br>Penaeus vannamei] --> B[Tagmatização]
-        A --> C[Sistema Orgânico Interno]
-        A --> D[Importância Zootécnica]
-        
-        B --> B1[Cefalotórax]
-        B --> B2[Abdômen / Pleômeros]
-        B --> B3[Apêndices]
-        
-        B1 --> B1a[Rostro & Carapaça]
-        B1 --> B1b[Olhos Compostos]
-        
-        B3 --> B3a[Pereiópodes: Locomoção]
-        B3 --> B3b[Pleópodes: Natação]
-        B3 --> B3c[Leque Caudal: Fuga]
-        
-        C --> C1[Hepatopâncreas: Digestão/Reserva]
-        C --> C2[Brânquias: Respiração]
-        C --> C3[Sistema Endócrino: Muda/Ecdise]
-        
-        D --> D1[Carcinicultura Comercial]
-        D --> D2[Processamento de Filés/Caldas]
-    ```
+    html_3d = f"""
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+    <div style="background: radial-gradient(circle, #112240 0%, #0A192F 100%); border-radius: 12px; padding: 15px; border: 1px solid #00E5FF;">
+        <model-viewer 
+            src="data:model/gltf-binary;base64,{dados_b64}"
+            alt="{titulo_modelo}"
+            camera-controls
+            auto-rotate
+            ar
+            ar-modes="webxr scene-viewer quick-look"
+            shadow-intensity="1"
+            exposure="1.1"
+            style="width: 100%; height: 520px; background-color: transparent;">
+            <button slot="ar-button" style="background-color: #00E5FF; color: #0A192F; border-radius: 8px; border: none; padding: 10px 18px; position: absolute; bottom: 16px; right: 16px; font-weight: bold; cursor: pointer;">
+                📱 Projetar na Bancada (Realidade Aumentada)
+            </button>
+        </model-viewer>
+    </div>
     """
-    st.markdown(mapa_mermaid)
+    st.components.v1.html(html_3d, height=560)
+
+# ==============================================================================
+# BARRA LATERAL E CONTROLE DE FOCO EM AULA
+# ==============================================================================
+with st.sidebar:
+    st.title("🦐 CrustaMorf 2.0")
+    st.caption("Engenharia de Pesca & Aquicultura — **UFRPE**")
+    st.markdown("---")
     
-    st.success("💡 Dica de Estudo: Utilize este mapa mental como guia mestre antes de iniciar as sessões práticas no laboratório de hidrobiologia.")
+    modo_foco = st.toggle("🎯 Modo Foco (Aula Prática)", value=False, help="Simplifica a interface e exibe o roteiro rápido de inspeção de bancada.")
+    
+    modulo = st.radio(
+        "Selecione o Módulo de Estudo:",
+        [
+            "📖 1. Atlas 2D & Clínica Zootécnica",
+            "🧊 2. Laboratório 3D & Realidade Aumentada",
+            "🩺 3. Simulador de Diagnóstico (PBL)",
+            "🎮 4. Modo Desafio (Quiz 15 Questões)",
+            "🧠 5. Mapa Mental & Roteiro de Bancada"
+        ]
+    )
+    
+    st.markdown("---")
+    if modo_foco:
+        st.success("✅ **Modo Foco Ativo:** Siga o checklist abaixo durante a análise do espécime na lupa.")
+        st.checkbox("1. Contar fórmula rostral (D/V)")
+        st.checkbox("2. Inspecionar transparência da carapaça")
+        st.checkbox("3. Verificar 3 pares de pereiópodes quelados")
+        st.checkbox("4. Identificar sexo (Petasma vs. Télico)")
+        st.checkbox("5. Avaliar integridade do leque caudal")
+    else:
+        st.info("💡 **Dica:** Ative o *Modo Foco* acima durante as aulas de laboratório para habilitar o checklist de bancada.")
+
+# ==============================================================================
+# MÓDULO 1: ATLAS 2D INTERATIVO E IMPORTÂNCIA ZOOTÉCNICA
+# ==============================================================================
+if modulo == "📖 1. Atlas 2D & Clínica Zootécnica":
+    st.header("📖 Atlas Morfológico 2D & Diagnóstico Zootécnico")
+    st.write("Explore as estruturas anatômicas do *Penaeus vannamei*, compreendendo sua função biológica e como avaliar a saúde do cultivo.")
+
+    col_filtro1, col_filtro2 = st.columns([1, 2])
+    with col_filtro1:
+        filtro_tagma = st.selectbox(
+            "Filtrar por Região Corporal (Tagma):",
+            ["Todas as Regiões", "Cefalotórax", "Abdômen", "Leque Caudal", "Sistemas Internos"]
+        )
+    
+    estruturas_filtradas = {
+        k: v for k, v in ESTRUTURAS.items()
+        if filtro_tagma == "Todas as Regiões" or v["tagma"] == filtro_tagma
+    }
+    
+    with col_filtro2:
+        estrutura_selecionada = st.selectbox(
+            "Selecione a Estrutura para Inspeção Detalhada:",
+            list(estruturas_filtradas.keys())
+        )
+
+    col_img, col_info = st.columns([1.2, 1])
+
+    with col_img:
+        img_base = carregar_imagem_2d().copy()
+        draw = ImageDraw.Draw(img_base)
+        
+        # Desenhar marcador luminoso na estrutura selecionada
+        x, y = ESTRUTURAS[estrutura_selecionada]["coords"]
+        raio = 16
+        draw.ellipse([x - raio, y - raio, x + raio, y + raio], outline=(0, 229, 255), width=4)
+        draw.ellipse([x - 5, y - 5, x + 5, y + 5], fill=(255, 107, 107))
+        
+        st.image(img_base, caption=f"Foco Anatômico: {estrutura_selecionada}", use_container_width=True)
+
+    with col_info:
+        dados = ESTRUTURAS[estrutura_selecionada]
+        st.markdown(f"""
+        <div class="stCard">
+            <span class="badge-tagma">{dados['tagma']}</span>
+            <h4>🔎 {estrutura_selecionada}</h4>
+            <p><strong>⚙️ Função Biológica:</strong><br>{dados['funcao']}</p>
+        </div>
+        <div class="alerta-clinico">
+            <strong>🩺 Importância Zootécnica & Sinais Clínicos:</strong><br>{dados['importancia_zootecnica']}
+        </div>
+        <div class="dica-bancada">
+            <strong>🔬 Roteiro de Prática (Na Lupa):</strong><br>{dados['dica_lab']}
+        </div>
+        """, unsafe_allow_html=True)
+
+# ==============================================================================
+# MÓDULO 2: VISUALIZADOR 3D E REALIDADE AUMENTADA (AR)
+# ==============================================================================
+elif modulo == "🧊 2. Laboratório 3D & Realidade Aumentada":
+    st.header("🧊 Visualizador 3D Interativo & Realidade Aumentada (AR)")
+    st.write("Gire o modelo em 360°, aplique zoom para observar a inserção dos apêndices ou projete o camarão na bancada pelo celular.")
+
+    aba_ext, aba_int = st.tabs(["🦐 Morfologia Externa (camarao.glb)", "🔬 Estruturas Internas/Detalhadas (camarao_detalhado.glb)"])
+
+    with aba_ext:
+        col_3d, col_roteiro = st.columns([2.2, 1])
+        with col_3d:
+            renderizar_modelo_3d("camarao.glb", "Morfologia Externa - Penaeus vannamei")
+        with col_roteiro:
+            st.subheader("🎯 Missão de Inspeção 3D")
+            st.caption("Marque cada estrutura à medida que a localizar rotacionando o modelo 3D:")
+            st.checkbox("Localizar o Rostro denteado na porção anterior")
+            st.checkbox("Diferenciar os 5 pares de Pereiópodes torácicos")
+            st.checkbox("Observar os 5 pares de Pleópodes abdominais")
+            st.checkbox("Inspecionar a articulação do 6º segmento com o Telson")
+
+    with aba_int:
+        renderizar_modelo_3d("camarao_detalhado.glb", "Anatomia Detalhada - Penaeus vannamei")
+
+# ==============================================================================
+# MÓDULO 3: SIMULADOR DE CASOS CLÍNICOS (APRENDIZAGEM ATIVA - PBL)
+# ==============================================================================
+elif modulo == "🩺 3. Simulador de Diagnóstico (PBL)":
+    st.header("🩺 Simulador de Diagnóstico Clínico em Aquicultura")
+    st.write("Aplique os conhecimentos de morfologia para diagnosticar problemas reais em fazendas de camarão e laboratórios de larvicultura.")
+
+    for i, caso in enumerate(CASOS_CLINICOS):
+        with st.expander(f"📋 {caso['titulo']}", expanded=(i == 0)):
+            st.markdown(f"**Cenário de Campo:** {caso['cenario']}")
+            resposta_caso = st.radio(
+                caso["pergunta"],
+                caso["opcoes"],
+                key=f"caso_{i}",
+                index=None
+            )
+            if resposta_caso:
+                if caso["opcoes"].index(resposta_caso) == caso["correta"]:
+                    st.success(f"✅ {caso['explicacao']}")
+                else:
+                    st.error("❌ Diagnóstico incorreto. Reavalie a relação entre o sinal morfológico descrito e a função do órgão.")
+
+# ==============================================================================
+# MÓDULO 4: MODO DESAFIO (QUIZ GAMIFICADO DE 15 QUESTÕES)
+# ==============================================================================
+elif modulo == "🎮 4. Modo Desafio (Quiz 15 Questões)":
+    st.header("🎮 Modo Desafio: Avaliação de Morfologia de Crustáceos")
+    st.write("Responda às 15 questões para testar seu domínio antes da prova prática de laboratório.")
+
+    if "respostas_quiz" not in st.session_state:
+        st.session_state.respostas_quiz = {}
+
+    respondidas = len(st.session_state.respostas_quiz)
+    st.progress(respondidas / len(QUESTOES_QUIZ), text=f"Progresso: {respondidas}/{len(QUESTOES_QUIZ)} questões respondidas")
+
+    acertos = 0
+    for idx, item in enumerate(QUESTOES_QUIZ):
+        st.markdown(f"#### {item['q']}")
+        escolha = st.radio(
+            "Selecione a alternativa correta:",
+            item["opts"],
+            key=f"quiz_q_{idx}",
+            index=None
+        )
+        if escolha:
+            st.session_state.respostas_quiz[idx] = escolha
+            if item["opts"].index(escolha) == item["ans"]:
+                acertos += 1
+                st.success(f"✔️ **Correto!** {item['exp']}")
+            else:
+                correta_txt = item["opts"][item["ans"]]
+                st.error(f"❌ **Incorreto.** A resposta certa é **{correta_txt}**. {item['exp']}")
+        st.markdown("---")
+
+    if respondidas == len(QUESTOES_QUIZ):
+        nota = (acertos / len(QUESTOES_QUIZ)) * 10
+        st.subheader(f"🏆 Resultado Final: {acertos}/15 acertos (Nota: {nota:.1f})")
+        if acertos >= 13:
+            st.balloons()
+            st.success("🌟 **Nível Especialista em Carcinologia!** Você está 100% preparado para a aula prática.")
+        elif acertos >= 9:
+            st.info("👍 **Bom Desempenho!** Revise apenas os detalhes de apêndices e sistemas internos no Atlas 2D.")
+        else:
+            st.warning("📚 **Continue Praticando!** Utilize o Mapa Mental e o Atlas 2D para reforçar a função de cada tagma.")
+
+# ==============================================================================
+# MÓDULO 5: MAPA MENTAL & TABELA COMPARATIVA TAXONÔMICA
+# ==============================================================================
+elif modulo == "🧠 5. Mapa Mental & Roteiro de Bancada":
+    st.header("🧠 Síntese Estrutural & Comparativo Taxonômico")
+    
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.markdown("""
+        <div class="stCard">
+            <h4>1. Tagma: Cefalotórax (Fusão Cabeça + Tórax)</h4>
+            <ul>
+                <li><strong>Sensorial:</strong> Olhos compostos pedunculados, Antênulas (com estatocisto) e Antenas (com escafocerito).</li>
+                <li><strong>Bucal:</strong> Mandíbulas, Maxílulas, Maxilas e 3 pares de Maxilípedes.</li>
+                <li><strong>Locomoção Torácica:</strong> 5 pares de Pereiópodes (3 primeiros pares quelados em <em>P. vannamei</em>).</li>
+                <li><strong>Órgãos Internos:</strong> Hepatopâncreas, Coração dorsal, Dendrobrânquias e Glândula Antenal.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_m2:
+        st.markdown("""
+        <div class="stCard">
+            <h4>2. Tagma: Abdômen (Pleón) & Leque Caudal</h4>
+            <ul>
+                <li><strong>Segmentação:</strong> 6 somitos musculares revestidos por pleuras laterais.</li>
+                <li><strong>Locomoção Natatória:</strong> 5 pares de Pleópodes birremes.</li>
+                <li><strong>Dimorfismo Sexual:</strong> Macho com <em>Petasma</em> (1º pleópode) | Fêmea com <em>Télico aberto</em> (tórax ventral).</li>
+                <li><strong>Propulsão de Fuga:</strong> Telson central pontiagudo + 2 pares de Urópodes formando o leque caudal.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.subheader("📊 Diferenciação Prática em Laboratório: Peneídeos vs. Carídeos")
+    st.table({
+        "Característica Anatômica": [
+            "Subordem",
+            "Pereiópodes Quelados (Pinças)",
+            "Pleura do 2º Segmento Abdominal",
+            "Tipo de Brânquia",
+            "Comportamento Reprodutivo"
+        ],
+        "Camarão Marinho (Penaeus vannamei)": [
+            "Dendrobranchiata",
+            "Nos 3 primeiros pares (1º, 2º e 3º)",
+            "Sobrepõe apenas o 3º segmento",
+            "Dendrobrânquia (ramificada)",
+            "Desova livre na água (não incuba ovos no abdômen)"
+        ],
+        "Camarão da Malásia (Macrobrachium rosenbergii)": [
+            "Pleocyemata (Infraordem Caridea)",
+            "Apenas nos 2 primeiros pares (1º e 2º)",
+            "Expandida: sobrepõe o 1º e o 3º segmento",
+            "Filobrânquia (lamelar)",
+            "Fêmea incuba os ovos aderidos aos pleópodes"
+        ]
+    })
